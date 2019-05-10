@@ -1,0 +1,179 @@
+procedure CARGAR_ARCHIVO
+  (
+   v_camp_id    number,
+   ichDirectory varchar2,
+   pFileName    varchar2,
+   ichUsuario   varchar2,
+   v_resultado  out number  --1: Exitoso, 0: Con errores
+  )
+AS
+
+v_cCreateDir    VARCHAR2(2000);
+v_error         number;
+v_message       VARCHAR(500);
+v_tableName     VARCHAR(50);
+v_delimiter     varchar(3);
+no_such_table EXCEPTION;
+
+rfDataCursor       SYS_REFCURSOR;
+TYPE rData IS RECORD
+(
+ NUM_CUENTA varchar2(20)
+);
+
+TYPE tyData IS TABLE OF rData INDEX BY BINARY_INTEGER;
+v_tyData      tyData;
+
+  BEGIN
+  
+    v_tableName := 'TEMP_CAMP_CLIENTES';
+    v_error :=null;
+    v_delimiter:=';';
+    
+    /*
+    BEGIN
+            v_cCreateDir := 'CREATE OR REPLACE DIRECTORY dirCampanaTasaEspe AS '''||ichDirectory||'''';
+            EXECUTE IMMEDIATE( v_cCreateDir );
+            dbms_output.put_line('dirOracle: ' || v_cCreateDir);
+            
+            --v_cCreateDir := 'grant read, write on directory dir_rete_extrac_cli to public';
+            --EXECUTE IMMEDIATE( v_cCreateDir );
+            --dbms_output.put_line('grant sobre directorio: '||v_cCreateDir);
+            
+        EXCEPTION
+            WHEN OTHERS THEN
+            
+            v_error := SQLCODE;
+            v_message := SUBSTR(SQLERRM, 1, 200);
+            v_resultado := 0;
+            
+            dbms_output.put_line('error: '||v_error||', mensaje: '||v_message);
+
+            RAISE;
+            
+    END;
+    */
+    
+    --1. Borrar tabla temporal donde se cargan los datos (SI YA EXISTE)
+    BEGIN
+        EXECUTE IMMEDIATE('drop table '|| v_tableName);
+        dbms_output.put_line('Se elimina la tabla: '|| v_tableName);
+    EXCEPTION
+        WHEN no_such_table THEN
+            
+            dbms_output.put_line('La tabla ['||v_tableName||'] no existe');
+           
+        WHEN OTHERS THEN
+           
+            v_error := SQLCODE;
+            v_message := SUBSTR(SQLERRM, 1, 200);
+            
+            dbms_output.put_line('error: '||v_error||', mensaje: '||v_message);
+
+    END; --FIN borrar tabla temporal
+    dbms_output.put_line('fin tabla: '|| v_tableName);
+    
+    --2. crear la tabla temporal donde se cargaran los datos
+    begin
+        
+        EXECUTE IMMEDIATE ('CREATE TABLE ' || v_tableName ||
+            '(
+               NUM_CUENTA varchar2(20)
+             )
+            ORGANIZATION EXTERNAL ( 
+            TYPE ORACLE_LOADER
+            DEFAULT DIRECTORY dirCampanaTasaEspe
+            ACCESS PARAMETERS 
+            (
+            RECORDS DELIMITED BY NEWLINE
+            BADFILE dirCampanaTasaEspe: ''campClientes.csv.bad''
+            LOGFILE dirCampanaTasaEspe: ''campClientes.csv.log'' 
+            DISCARDFILE dirCampanaTasaEspe: ''campClientes.csv-discarded.log'' 
+            FIELDS terminated by '';''
+              (
+                NUM_CUENTA
+              ) 
+             ) 
+             LOCATION ( ''' || pFileName || ''')' ||
+             ')'||
+             ' PARALLEL 2' || chr(10) ||
+             ' REJECT LIMIT UNLIMITED');
+        
+        --DBMS_OUTPUT.put_line('Otorgar permisos a la tabla ORGANIZATION EXTERNAL recien creada');
+        --execute immediate ('GRANT SELECT, INSERT, UPDATE, DELETE ON '|| v_tableName || ' TO USR_ODS');
+        --execute immediate ('GRANT ALL ON '|| v_tableName || ' TO USR_ODS');
+        
+        DBMS_OUTPUT.put_line('Se crea la tabla Temporal: '|| v_tableName);
+        
+        EXCEPTION
+        WHEN OTHERS THEN
+            v_error := SQLCODE;
+            v_message := SUBSTR(SQLERRM, 1, 200);
+            v_resultado := SUBSTR(SQLERRM, 1, 500);
+            
+            dbms_output.put_line('Clientes1: '||v_error||', mensaje: '||v_resultado);
+
+    end; --FIN 3. crear tabla temporal
+    
+    --DBMS_OUTPUT.put_line('despues de crear la tabla temporal '|| v_tableName);
+    
+    INSERT INTO tbl_prueba_rafa (id, codigo, mensaje) VALUES (9, 'LC','antes select * from v_tableName');
+    commit;
+    
+    execute IMMEDIATE ('SELECT * FROM '||v_tableName);
+    
+    INSERT INTO tbl_prueba_rafa (id, codigo, mensaje) VALUES (10, 'LC','despues select * from v_tableName');
+    commit;
+    dbms_output.put_line('despues de select * from v_tableName');
+    
+    --OPEN rfDataCursor FOR 'SELECT * FROM '||v_tableName;
+    INSERT INTO tbl_prueba_rafa (id, codigo, mensaje) VALUES (10, 'C10','antes del BULK COLLECT');
+    commit;
+    
+    dbms_output.put_line('despues de OPEN refDataCursor FOR select * from v_tableName');
+
+    LOOP
+        FETCH rfDataCursor BULK COLLECT INTO v_tyData LIMIT 1000;
+
+           DBMS_OUTPUT.put_line('total registros: '||v_tyData.count);
+           DBMS_OUTPUT.put_line('v_tyData.first: '||v_tyData.first);
+           DBMS_OUTPUT.put_line('v_tyData.last: '||v_tyData.last);
+
+            --Inserta los registros
+            FORALL idx IN v_tyData.first .. v_tyData.last
+          
+                --insert into tbl_prueba_rafa(id, mensaje) values (TO_NUMBER(v_tyData(idx).NUM_CUENTA), v_tyData(idx).NUM_CUENTA);
+                --insert into tbl_prueba_rafa( mensaje) values ( v_tyData(idx).NUM_CUENTA);
+                --insert into tbl_prueba_rafa( mensaje) values (v_tableName||sysdate);
+          
+                INSERT INTO USR_STG_ORACLE.STG_ORC_CAMP_PROMCLI (
+                 --camp_id, 
+                 camp_id_prom, camp_cuenta,
+                 camp_fecha_crea, camp_usuario_crea,
+                 camp_fecha_mod, camp_usuario_mod, camp_estado
+                ) VALUES (
+                 --SEQ_ORC_CAMP_PROMCLI.nextval,
+                 v_camp_id, TO_NUMBER(v_tyData(idx).NUM_CUENTA),
+                 --v_camp_id, v_tyData(idx).NUM_CUENTA,
+                 --v_camp_id, 300000000127,
+                 sysdate, ichUsuario,
+                 null, null, 1);
+
+          COMMIT;
+          
+        EXIT WHEN rfDataCursor%NOTFOUND;
+    END LOOP;
+        
+    v_resultado :='';
+    
+    EXCEPTION
+      WHEN OTHERS THEN
+        
+        v_error := SQLCODE;
+        v_message := SUBSTR(to_char(SQLERRM), 1, 200);
+        --v_resultado := SUBSTR(to_char(SQLERRM), 1, 500);
+        v_resultado := to_char(SQLERRM);
+            
+        dbms_output.put_line('Clientes2: '||v_error||', mensaje: '||v_message);
+
+end CARGAR_CAMP_CLIENTES;
